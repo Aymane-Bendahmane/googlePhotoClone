@@ -59,5 +59,14 @@ public class GooglePhotoCloneApplication {
         }
         return true;
     }
+    public static class ImageMagick{
+        public static String detetImageMagickInstalled() {
+            return "bla";
+        }
+        public enum Version {
+            NA,IM_6,IM_7
+        }
+    }
+
 
 }

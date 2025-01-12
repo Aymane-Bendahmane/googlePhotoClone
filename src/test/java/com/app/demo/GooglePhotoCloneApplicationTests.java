@@ -1,13 +1,19 @@
 package com.app.demo;
 
-import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
 
-@SpringBootTest
+import org.junit.jupiter.api.Test;
+
+import static org.assertj.core.api.Java6Assertions.assertThat;
+
 class GooglePhotoCloneApplicationTests {
+    @Test
+    void imageMagick_is_installed(){
+        assertThat(GooglePhotoCloneApplication.detetImageMagickInstalled().equals("bla"))
+    }
 
     @Test
-    void contextLoads() {
+    void thumbnail_creation_works() {
+
     }
 
 }
