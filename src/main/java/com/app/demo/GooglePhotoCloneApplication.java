@@ -60,7 +60,7 @@ public class GooglePhotoCloneApplication {
         return true;
     }
     public static class ImageMagick{
-        public static String detetImageMagickInstalled() {
+        public String detetImageMagickInstalled() {
             return "bla";
         }
         public enum Version {
