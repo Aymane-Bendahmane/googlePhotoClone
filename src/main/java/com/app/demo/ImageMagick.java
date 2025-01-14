@@ -1,10 +1,33 @@
 package com.app.demo;
 
 import java.io.IOException;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 public class ImageMagick {
 
+    private final Version currentImageMagickVersion = detectVersion();
+
+    public void createThumbnail(Path source, Path target) {
+        try {
+            System.out.println("Creating thumbnail " + source.normalize().toAbsolutePath());
+            List<String> command = new ArrayList<>(List.of("magick", source.normalize().toAbsolutePath().toString(), "-resize", "300x", target.normalize().toAbsolutePath().toString()));
+
+            if(currentImageMagickVersion == Version.IM_6 )
+                command.add(0,"convert");
+
+            ProcessBuilder builder = new ProcessBuilder(command);
+            builder.inheritIO();
+            Process process = builder.start();
+            boolean finished = process.waitFor(3, TimeUnit.SECONDS);
+            if (!finished)
+                process.destroy();
+        } catch (InterruptedException | IOException e) {
+            e.printStackTrace();
+        }
+    }
 
     public int run(String... cmds) throws IOException, InterruptedException {
         ProcessBuilder builder = new ProcessBuilder(cmds);
@@ -16,7 +39,7 @@ public class ImageMagick {
         return process.exitValue();
     }
 
-    public Version detectImageMagickInstalled() {
+    public Version detectVersion() {
 
         try {
             int existCode = run("magick", "--version");
