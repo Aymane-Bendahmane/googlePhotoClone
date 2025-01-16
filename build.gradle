@@ -20,6 +20,7 @@ repositories {
 dependencies {
     testImplementation('org.junit.jupiter:junit-jupiter:5.11.4')
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.11.4'
+    implementation 'commons-codec:commons-codec:1.16.0'
     testImplementation group: 'org.assertj', name: 'assertj-core', version: '3.23.1'
 }
 

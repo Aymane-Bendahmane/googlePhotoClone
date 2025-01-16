@@ -10,7 +10,7 @@ public class ImageMagick {
 
     private final Version currentImageMagickVersion = detectVersion();
 
-    public void createThumbnail(Path source, Path target) {
+    public boolean createThumbnail(Path source, Path target) {
         try {
             System.out.println("Creating thumbnail " + source.normalize().toAbsolutePath());
             List<String> command = new ArrayList<>(List.of("magick", source.normalize().toAbsolutePath().toString(), "-resize", "300x", target.normalize().toAbsolutePath().toString()));
@@ -24,9 +24,11 @@ public class ImageMagick {
             boolean finished = process.waitFor(3, TimeUnit.SECONDS);
             if (!finished)
                 process.destroy();
+            return finished;
         } catch (InterruptedException | IOException e) {
             e.printStackTrace();
         }
+        return false;
     }
 
     public int run(String... cmds) throws IOException, InterruptedException {

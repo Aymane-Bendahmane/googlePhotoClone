@@ -1,7 +1,10 @@
 package com.app.demo;
 
 
+import org.apache.commons.codec.digest.DigestUtils;
+
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.ExecutorService;
@@ -14,7 +17,7 @@ public class GooglePhotoCloneApplication {
 
     static String userHome = System.getProperty("user.home");
     static Path thumbnailsDir = Path.of(userHome).resolve(".generated_thumbnails");
-
+    static ImageMagick imageMagick = new ImageMagick();
     public static void main(String[] args) throws IOException, InterruptedException {
 
         Files.createDirectories(thumbnailsDir);
@@ -30,18 +33,36 @@ public class GooglePhotoCloneApplication {
         try (Stream<Path> files = Files.walk(sourceDir)
                 .filter(Files::isRegularFile)
                 .filter(GooglePhotoCloneApplication::isImage)) {
-            files.forEach(path -> {
-                executorService.submit(() -> {
-                    counter.incrementAndGet();
-                    new ImageMagick().createThumbnail(path, thumbnailsDir.resolve(path.getFileName()));
-                });
+            files.forEach(path -> executorService.submit(() -> {
 
-            });
+                try {
+                    Path thumbnail = getThumbnailPath(path);
+                    boolean success  = imageMagick.createThumbnail(path, thumbnail);
+                    if (success) {
+                        counter.incrementAndGet();
+                    }
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+
+            }));
             executorService.shutdown();
             executorService.awaitTermination(1, TimeUnit.HOURS);
         }
         long end = System.currentTimeMillis();
         System.out.println(" Converted " + counter + " images to thumbnails. took " + ((end - start) * 0.001) + " seconds");
+    }
+
+    private static Path getThumbnailPath(Path path) throws IOException {
+        String hash = DigestUtils.sha256Hex( path.getFileName().toString());
+        String subDir = hash.substring(0, 2);
+        String fileName = hash.substring(2);
+
+        Path subDirectory = thumbnailsDir.resolve(subDir);
+        if (!Files.exists(subDirectory)) {
+            Files.createDirectories(subDirectory);
+        }
+        return subDirectory.resolve(fileName+".webp");
     }
 
     private static boolean isImage(Path path) {
