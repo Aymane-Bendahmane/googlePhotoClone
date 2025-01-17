@@ -1,5 +1,9 @@
 package com.app.demo;
 
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+
+import javax.sql.DataSource;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
