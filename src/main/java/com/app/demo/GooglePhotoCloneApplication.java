@@ -9,14 +9,20 @@ import javax.sql.DataSource;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -28,7 +34,20 @@ public class GooglePhotoCloneApplication {
     static String userHome = System.getProperty("user.home");
     static Path thumbnailsDir = Path.of(userHome).resolve(".generated_thumbnails");
     static ImageMagick imageMagick = new ImageMagick();
-    private static DataSource dataSource = dataSource();
+    private static final DataSource dataSource = dataSource();
+    static String template = """
+            <!DOCTYPE html>
+            <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                        <title>Title</title>
+                    </head>
+                <body>
+                    <h1>Pictures</h1>
+                    {{pics}}
+                </body>
+            </html>
+            """;
 
     public static void main(String[] args) throws IOException, InterruptedException {
 
@@ -61,6 +80,7 @@ public class GooglePhotoCloneApplication {
             executorService.awaitTermination(1, TimeUnit.HOURS);
         }
         long end = System.currentTimeMillis();
+        writeHtmlFile();
         System.out.println(" Converted " + counter + " images to thumbnails. took " + ((end - start) * 0.001) + " seconds");
     }
 
@@ -117,7 +137,7 @@ public class GooglePhotoCloneApplication {
 
     private static DataSource dataSource() {
         HikariConfig hikariConfig = new HikariConfig();
-        hikariConfig.setJdbcUrl("jdbc:h2:file:./media;DB_CLOSE_DELAY=-1;INIT=RUNSCRIPT FROM 'classpath:schema.sql';");
+        hikariConfig.setJdbcUrl("jdbc:h2:file:./media;DB_CLOSE_DELAY=-1;INIT=RUNSCRIPT FROM 'classpath:schema.sql'");
         hikariConfig.setUsername("root");
         hikariConfig.setPassword("root");
         return new HikariDataSource(hikariConfig);
@@ -142,5 +162,39 @@ public class GooglePhotoCloneApplication {
             e.printStackTrace();
             return null;
         }
+    }
+
+    private static void writeHtmlFile() throws IOException {
+        Map<LocalDate, List<String>> images = new TreeMap<>();
+
+        try (Connection connection = dataSource.getConnection();
+             PreparedStatement ps = connection.prepareStatement(
+                     "select hash, CAST(creation_date AS DATE) creation_date from media " +
+                     "order by creation_date desc")) {
+            ResultSet resultSet = ps.executeQuery();
+            while (resultSet.next()) {
+                String hash = resultSet.getString("hash");
+                LocalDate creationDate = resultSet.getObject("creation_date", LocalDate.class);
+
+                images.putIfAbsent(creationDate, new ArrayList<>());
+                images.get(creationDate).add(hash);
+            }
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+
+
+        StringBuilder html = new StringBuilder();
+        images.forEach((date, hashes) -> {
+            html.append("<h2>").append(date).append("</h2>");
+
+            hashes.forEach(hash -> {
+                Path image = thumbnailsDir.resolve(hash.substring(0, 2)).resolve(hash.substring(2) + ".webp");
+                html.append("<img width='300' src='").append(image.toAbsolutePath()).append("' loading='lazy'/>");
+            });
+            html.append("<br/>");
+        });
+
+        Files.write(Paths.get("./output.html"), template.replace("{{pics}}", html.toString()).getBytes());
     }
 }
