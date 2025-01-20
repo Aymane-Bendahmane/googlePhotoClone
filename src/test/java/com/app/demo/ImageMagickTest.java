@@ -48,7 +48,7 @@ public class ImageMagickTest{
 
     public record Dimensions(int width, int height){}
     private static Path copyTestImageTo(Path targetFile) {
-        try (InputStream resourceAsStream = ImageMagickTest.class.getResourceAsStream("/car.jpg")) {
+        try (InputStream resourceAsStream = ImageMagickTest.class.getResourceAsStream("/image-car.jpg")) {
             assert resourceAsStream != null;
             Files.copy(resourceAsStream, targetFile, StandardCopyOption.REPLACE_EXISTING);
             System.out.println("Copied test image to: = " + targetFile.toAbsolutePath());

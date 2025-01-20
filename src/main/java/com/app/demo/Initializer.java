@@ -1,6 +1,12 @@
 package com.app.demo;
 
 
+import com.drew.imaging.png.PngChunkType;
+import com.drew.metadata.Metadata;
+import com.drew.metadata.MetadataException;
+import com.drew.metadata.exif.ExifIFD0Directory;
+import com.drew.metadata.jpeg.JpegDirectory;
+import com.drew.metadata.png.PngDirectory;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import org.apache.commons.codec.digest.DigestUtils;
@@ -29,7 +35,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
-public class GooglePhotoCloneApplication {
+public class Initializer {
 
     static String userHome = System.getProperty("user.home");
     static Path thumbnailsDir = Path.of(userHome).resolve(".generated_thumbnails");
@@ -63,7 +69,7 @@ public class GooglePhotoCloneApplication {
 
         try (Stream<Path> files = Files.walk(sourceDir)
                 .filter(Files::isRegularFile)
-                .filter(GooglePhotoCloneApplication::isImage)) {
+                .filter(Initializer::isImage)) {
             files.forEach(image -> executorService.submit(() -> {
 
                 String hash = DigestUtils.sha256Hex(image.toString());
@@ -196,5 +202,34 @@ public class GooglePhotoCloneApplication {
         });
 
         Files.write(Paths.get("./output.html"), template.replace("{{pics}}", html.toString()).getBytes());
+    }
+    record Dimensions(int width, int height) {
+    }
+    static Dimensions getDimensions(Metadata metadata) {
+        try {
+            ExifIFD0Directory exifIfD0Directory = metadata.getFirstDirectoryOfType(ExifIFD0Directory.class);
+            if (exifIfD0Directory != null && exifIfD0Directory.containsTag(ExifIFD0Directory.TAG_IMAGE_WIDTH) && exifIfD0Directory.containsTag(ExifIFD0Directory.TAG_IMAGE_HEIGHT)) {
+                int width = exifIfD0Directory.getInt(ExifIFD0Directory.TAG_IMAGE_WIDTH);
+                int height = exifIfD0Directory.getInt(ExifIFD0Directory.TAG_IMAGE_HEIGHT);
+                return new Dimensions(width, height);
+            }
+
+            PngDirectory pngDirectory = metadata.getFirstDirectoryOfType(PngDirectory.class);
+            if (pngDirectory != null && pngDirectory.getPngChunkType().equals(PngChunkType.IHDR)) {
+                int width = pngDirectory.getInt(PngDirectory.TAG_IMAGE_WIDTH);
+                int height = pngDirectory.getInt(PngDirectory.TAG_IMAGE_HEIGHT);
+                return new Dimensions(width, height);
+            }
+
+            JpegDirectory jpegDirectory = metadata.getFirstDirectoryOfType(JpegDirectory.class);
+            if (jpegDirectory != null && jpegDirectory.containsTag(JpegDirectory.TAG_IMAGE_WIDTH) && jpegDirectory.containsTag(JpegDirectory.TAG_IMAGE_HEIGHT)) {
+                int width = jpegDirectory.getInt(JpegDirectory.TAG_IMAGE_WIDTH);
+                int height = jpegDirectory.getInt(JpegDirectory.TAG_IMAGE_HEIGHT);
+                return new Dimensions(width, height);
+            }
+        } catch (MetadataException e) {
+            e.printStackTrace();
+        }
+        return new Dimensions(0, 0);
     }
 }
