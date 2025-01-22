@@ -1,18 +1,32 @@
 package com.app.demo;
 
 
+import com.drew.imaging.ImageMetadataReader;
+import com.drew.imaging.ImageProcessingException;
 import com.drew.imaging.png.PngChunkType;
+import com.drew.lang.GeoLocation;
 import com.drew.metadata.Metadata;
 import com.drew.metadata.MetadataException;
 import com.drew.metadata.exif.ExifIFD0Directory;
+import com.drew.metadata.exif.ExifSubIFDDirectory;
+import com.drew.metadata.exif.GpsDirectory;
 import com.drew.metadata.jpeg.JpegDirectory;
 import com.drew.metadata.png.PngDirectory;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import jakarta.persistence.EntityManagerFactory;
 import org.apache.commons.codec.digest.DigestUtils;
+import org.hibernate.SessionFactory;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
 
 import javax.sql.DataSource;
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -25,22 +39,23 @@ import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.TreeMap;
+import java.time.ZoneOffset;
+import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
-public class Initializer {
+public class Initializer implements ApplicationRunner {
 
     static String userHome = System.getProperty("user.home");
     static Path thumbnailsDir = Path.of(userHome).resolve(".generated_thumbnails");
-    static ImageMagick imageMagick = new ImageMagick();
-    private static final DataSource dataSource = dataSource();
+    private final ImageMagick imageMagick;
+    static HttpClient client = HttpClient.newHttpClient();
+    private final EntityManagerFactory emf;
+    private final Queries queries_;
     static String template = """
             <!DOCTYPE html>
             <html lang="en">
@@ -55,8 +70,14 @@ public class Initializer {
             </html>
             """;
 
-    public static void main(String[] args) throws IOException, InterruptedException {
+    public Initializer(ImageMagick imageMagick, EntityManagerFactory emf, Queries queries) {
+        this.imageMagick = imageMagick;
+        this.emf = emf;
+        queries_ = queries;
+    }
 
+    @Override
+    public void run(ApplicationArguments args) throws Exception {
         Files.createDirectories(thumbnailsDir);
         //point to the current directory where the jar exists "."
 
@@ -71,14 +92,39 @@ public class Initializer {
                 .filter(Files::isRegularFile)
                 .filter(Initializer::isImage)) {
             files.forEach(image -> executorService.submit(() -> {
+                String filename = image.getFileName().toString();
 
                 String hash = DigestUtils.sha256Hex(image.toString());
 
-                if (!exists(image, hash)) {
-                    save(image, hash);
-                    final boolean success = createThumbnail(image, hash);
-                    if (success) {
+
+                if (!queries_.existsByFilenameAndHash(filename, hash)) {
+
+
+                    Path thumbnail = getThumbnailPath(hash);
+
+                    if (!Files.exists(thumbnail)) {
+                        final boolean success = imageMagick.createThumbnail(image, thumbnail);
+                        if (!success) {
+                            System.err.println("Error creating thumbnail");
+                            return;
+                        }
+                    }
+
+
+                    try (InputStream is = Files.newInputStream(image)) {
+                        Metadata metadata = ImageMetadataReader.readMetadata(is);
+                        Location location = getLocation(metadata);
+                        LocalDateTime creationTime = getCreationTime(image, metadata);
+                        emf.unwrap(SessionFactory.class).inStatelessSession(ss -> {
+                            Media media = new Media(hash, filename, creationTime, location);
+                            ss.insert(media);
+                        });
                         counter.incrementAndGet();
+                    } catch (ImageProcessingException e) {
+                        e.printStackTrace();
+                        // not an image or something else
+                    } catch (IOException e) {
+                        throw new RuntimeException(e);
                     }
                 }
             }));
@@ -86,48 +132,82 @@ public class Initializer {
             executorService.awaitTermination(1, TimeUnit.HOURS);
         }
         long end = System.currentTimeMillis();
-        writeHtmlFile();
         System.out.println(" Converted " + counter + " images to thumbnails. took " + ((end - start) * 0.001) + " seconds");
     }
+    static Location getLocation(Metadata metadata) {
+        GpsDirectory gpsDirectory = metadata.getFirstDirectoryOfType(GpsDirectory.class);
+        if (gpsDirectory == null) {
+            return null;
+        }
 
-    private static boolean exists(Path image, String hash) {
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement stmt = connection.prepareStatement(
-                     "select 1 from media where filename = ? and hash = ?")) {
-            stmt.setString(1, image.getFileName().toString());
-            stmt.setString(2, hash);
-            try (ResultSet rs = stmt.executeQuery()) {
-                return rs.next();
-            }
-        } catch (SQLException e) {
+        GeoLocation geoLocation = gpsDirectory.getGeoLocation();
+        if (geoLocation == null) {
+            return null;
+        }
+
+        double latitude = geoLocation.getLatitude();
+        double longitude = geoLocation.getLongitude();
+        String dms = geoLocation.toDMSString();
+        AtomicReference<String> state = new AtomicReference<>("UNKNOWN");
+        AtomicReference<String> city = new AtomicReference<>("UNKNOWN");
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("https://api.3geonames.org/" + latitude + "," + longitude))
+                .build();
+        client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
+                .thenApply(HttpResponse::body)
+                .thenAccept(xml -> {
+                    state.set(xml.substring(xml.indexOf("<state>") + 7, xml.indexOf("</state>")));
+                    city.set(xml.substring(xml.indexOf("<city>") + 6, xml.indexOf("</city>")));
+                })
+                .join();
+        return new Location(latitude, longitude, state.get(), city.get(), dms);
+    }
+    static LocalDateTime getCreationTime(Path image, Metadata metadata) {
+
+        ExifSubIFDDirectory exifSubIFDDirectory = metadata.getFirstDirectoryOfType(ExifSubIFDDirectory.class);
+        if (exifSubIFDDirectory != null && exifSubIFDDirectory.containsTag(ExifSubIFDDirectory.TAG_DATETIME_ORIGINAL)) {
+            Date creatioDate = exifSubIFDDirectory.getDate(ExifSubIFDDirectory.TAG_DATETIME_ORIGINAL);
+            return creatioDate.toInstant().atOffset(ZoneOffset.UTC).toLocalDateTime();
+        }
+
+
+        ExifIFD0Directory exifIFD0Directory = metadata.getFirstDirectoryOfType(ExifIFD0Directory.class);
+        if (exifIFD0Directory != null && exifIFD0Directory.containsTag(ExifIFD0Directory.TAG_DATETIME)) {
+            Date creatioDate = exifIFD0Directory.getDate(ExifIFD0Directory.TAG_DATETIME);
+            return creatioDate.toInstant().atOffset(ZoneOffset.UTC).toLocalDateTime();
+        }
+
+
+        GpsDirectory firstDirectoryOfType = metadata.getFirstDirectoryOfType(GpsDirectory.class);
+        if (firstDirectoryOfType != null && firstDirectoryOfType.getGpsDate() != null) {
+            Date gpsDate = firstDirectoryOfType.getGpsDate();
+            return gpsDate.toInstant().atOffset(ZoneOffset.UTC).toLocalDateTime();
+        }
+
+        try {
+            BasicFileAttributes attr = Files.readAttributes(image, BasicFileAttributes.class);
+            FileTime fileTime = attr.creationTime();
+            return LocalDateTime.ofInstant(fileTime.toInstant(), ZoneId.systemDefault());
+        } catch (IOException e) {
             e.printStackTrace();
-        }
-        return false;
-    }
-
-
-    private static void save(Path path, String hash) {
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement statement = connection.prepareStatement(
-                     "INSERT INTO media (FILENAME, HASH, CREATION_DATE ) VALUES (?,? ,?)")) {
-
-            statement.setString(1, path.getFileName().toString());
-            statement.setString(2, hash);
-            statement.setObject(3, creationTime(path));
-            statement.executeUpdate();
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
+            return LocalDateTime.now();
         }
     }
 
-    private static Path getThumbnailPath(String hash) throws IOException {
+
+    private static Path getThumbnailPath(String hash){
 
         String subDir = hash.substring(0, 2);
         String fileName = hash.substring(2);
 
         Path subDirectory = thumbnailsDir.resolve(subDir);
         if (!Files.exists(subDirectory)) {
-            Files.createDirectories(subDirectory);
+            try {
+                Files.createDirectories(subDirectory);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
         }
         return subDirectory.resolve(fileName + ".webp");
     }
@@ -138,24 +218,6 @@ public class Initializer {
             return mimeType != null && mimeType.contains("image");
         } catch (IOException e) {
             throw new RuntimeException(e);
-        }
-    }
-
-    private static DataSource dataSource() {
-        HikariConfig hikariConfig = new HikariConfig();
-        hikariConfig.setJdbcUrl("jdbc:h2:file:./media;DB_CLOSE_DELAY=-1;INIT=RUNSCRIPT FROM 'classpath:schema.sql'");
-        hikariConfig.setUsername("root");
-        hikariConfig.setPassword("root");
-        return new HikariDataSource(hikariConfig);
-    }
-
-    private static boolean createThumbnail(Path image, String hash) {
-        try {
-            Path thumbnail = getThumbnailPath(hash);
-            return imageMagick.createThumbnail(image, thumbnail);
-        } catch (IOException e) {
-            e.printStackTrace();
-            return false;
         }
     }
 
@@ -170,41 +232,9 @@ public class Initializer {
         }
     }
 
-    private static void writeHtmlFile() throws IOException {
-        Map<LocalDate, List<String>> images = new TreeMap<>();
-
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement ps = connection.prepareStatement(
-                     "select hash, CAST(creation_date AS DATE) creation_date from media " +
-                     "order by creation_date desc")) {
-            ResultSet resultSet = ps.executeQuery();
-            while (resultSet.next()) {
-                String hash = resultSet.getString("hash");
-                LocalDate creationDate = resultSet.getObject("creation_date", LocalDate.class);
-
-                images.putIfAbsent(creationDate, new ArrayList<>());
-                images.get(creationDate).add(hash);
-            }
-        } catch (SQLException e) {
-            e.printStackTrace();
-        }
-
-
-        StringBuilder html = new StringBuilder();
-        images.forEach((date, hashes) -> {
-            html.append("<h2>").append(date).append("</h2>");
-
-            hashes.forEach(hash -> {
-                Path image = thumbnailsDir.resolve(hash.substring(0, 2)).resolve(hash.substring(2) + ".webp");
-                html.append("<img width='300' src='").append(image.toAbsolutePath()).append("' loading='lazy'/>");
-            });
-            html.append("<br/>");
-        });
-
-        Files.write(Paths.get("./output.html"), template.replace("{{pics}}", html.toString()).getBytes());
-    }
     record Dimensions(int width, int height) {
     }
+
     static Dimensions getDimensions(Metadata metadata) {
         try {
             ExifIFD0Directory exifIfD0Directory = metadata.getFirstDirectoryOfType(ExifIFD0Directory.class);
