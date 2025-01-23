@@ -12,15 +12,11 @@ import com.drew.metadata.exif.ExifSubIFDDirectory;
 import com.drew.metadata.exif.GpsDirectory;
 import com.drew.metadata.jpeg.JpegDirectory;
 import com.drew.metadata.png.PngDirectory;
-import com.zaxxer.hikari.HikariConfig;
-import com.zaxxer.hikari.HikariDataSource;
-import jakarta.persistence.EntityManagerFactory;
 import org.apache.commons.codec.digest.DigestUtils;
-import org.hibernate.SessionFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.stereotype.Component;
 
-import javax.sql.DataSource;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
@@ -29,14 +25,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
@@ -47,33 +37,18 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
-
+@Component
 public class Initializer implements ApplicationRunner {
 
     static String userHome = System.getProperty("user.home");
     static Path thumbnailsDir = Path.of(userHome).resolve(".generated_thumbnails");
     private final ImageMagick imageMagick;
     static HttpClient client = HttpClient.newHttpClient();
-    private final EntityManagerFactory emf;
-    private final Queries queries_;
-    static String template = """
-            <!DOCTYPE html>
-            <html lang="en">
-                <head>
-                    <meta charset="UTF-8">
-                        <title>Title</title>
-                    </head>
-                <body>
-                    <h1>Pictures</h1>
-                    {{pics}}
-                </body>
-            </html>
-            """;
+    private final MediaRepository mediaRepository;
 
-    public Initializer(ImageMagick imageMagick, EntityManagerFactory emf, Queries queries) {
+    public Initializer(ImageMagick imageMagick,MediaRepository mediaRepository) {
         this.imageMagick = imageMagick;
-        this.emf = emf;
-        queries_ = queries;
+        this.mediaRepository = mediaRepository;
     }
 
     @Override
@@ -97,7 +72,7 @@ public class Initializer implements ApplicationRunner {
                 String hash = DigestUtils.sha256Hex(image.toString());
 
 
-                if (!queries_.existsByFilenameAndHash(filename, hash)) {
+                if (!mediaRepository.existsByFilenameAndHash(filename, hash)) {
 
 
                     Path thumbnail = getThumbnailPath(hash);
@@ -115,10 +90,7 @@ public class Initializer implements ApplicationRunner {
                         Metadata metadata = ImageMetadataReader.readMetadata(is);
                         Location location = getLocation(metadata);
                         LocalDateTime creationTime = getCreationTime(image, metadata);
-                        emf.unwrap(SessionFactory.class).inStatelessSession(ss -> {
-                            Media media = new Media(hash, filename, creationTime, location);
-                            ss.insert(media);
-                        });
+                        mediaRepository.save(new Media(hash, filename, creationTime, location));
                         counter.incrementAndGet();
                     } catch (ImageProcessingException e) {
                         e.printStackTrace();

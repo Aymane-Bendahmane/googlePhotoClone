@@ -20,16 +20,16 @@ public class MediaController {
     static String userHome = System.getProperty("user.home");
     static Path thumbnailsDir = Path.of(userHome).resolve(".photos");
 
-    private final Queries queries_;
+    private final MediaRepository mediaRepository;
 
-    public MediaController(Queries queries_) {
-        this.queries_ = queries_;
+    public MediaController(MediaRepository mediaRepository) {
+        this.mediaRepository = mediaRepository;
     }
 
     @GetMapping("/")
     public String index(Model model) {
         Map<LocalDate, List<Media>> images = new LinkedHashMap<>();
-        List<Media> media = queries_.media(Order.desc(Media_.creationDate));
+        List<Media> media = mediaRepository.media();
 
         media.forEach(m -> {
             LocalDate creationDate = m.getCreationDate().toLocalDate();
