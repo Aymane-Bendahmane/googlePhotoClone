@@ -3,6 +3,9 @@ package com.app.demo;
 import jakarta.persistence.*;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Entity
 public class Media {
@@ -64,5 +67,21 @@ public class Media {
 
     public void setLocation(Location location) {
         this.location = location;
+    }
+    public static String locationsToString(Collection<Media> media) {
+        Set<String> locations = media.stream().map(m -> {
+            Location location = m.getLocation();
+            if (location == null) {
+                return "Unknown";
+            }
+            return location.getCountry() + ", " + location.getCity();
+        }).collect(Collectors.toSet());
+        if (locations.size() > 1) {
+            return locations.iterator().next() + "& " + (locations.size() - 1) + " more";
+        } else if (locations.size() == 1) {
+            return locations.iterator().next();
+        } else {
+            throw new UnsupportedOperationException("should not happen");
+        }
     }
 }

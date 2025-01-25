@@ -1,7 +1,6 @@
 package com.app.demo;
 
 
-import org.hibernate.query.Order;
 import org.springframework.core.io.PathResource;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Controller;
@@ -28,6 +27,7 @@ public class MediaController {
 
     @GetMapping("/")
     public String index(Model model) {
+        System.out.println("get request");
         Map<LocalDate, List<Media>> images = new LinkedHashMap<>();
         List<Media> media = mediaRepository.media();
 
