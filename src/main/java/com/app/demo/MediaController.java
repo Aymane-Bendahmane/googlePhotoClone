@@ -17,7 +17,7 @@ import java.util.*;
 public class MediaController {
 
     static String userHome = System.getProperty("user.home");
-    static Path thumbnailsDir = Path.of(userHome).resolve(".photos");
+    static Path thumbnailsDir = Path.of(userHome).resolve(".generated_thumbnails");
 
     private final MediaRepository mediaRepository;
 
